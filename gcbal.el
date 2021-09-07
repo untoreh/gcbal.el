@@ -9,7 +9,7 @@
 ;; Version: 0.0.1
 ;; Keywords: emacs gc garbage collector
 ;; Homepage: https://github.com/untoreh/gcbal
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "25.1"))
 ;;
 ;; This file is not part of GNU Emacs.
 ;;
@@ -18,8 +18,9 @@
 ;; Garbage Collection Tuner
 ;;
 ;;; Code:
-;;; wip/gcbal.el -*- lexical-binding: t; -*-
-;;;
+
+(require 'pcache)
+
 (defvar gcbal-target-gctime 0.33
   "Desired time for a GC run.
 Must be higher than the time spent collecting no garbage.")
@@ -31,7 +32,7 @@ When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
 (defvar gcbal--adjusted-target-gctime gcbal-target-gctime)
 (defvar gcbal-verbose nil)
 (defvar gcbal--offsets-ring (make-ring 20)
-  "Tracks how well gcbal performed")
+  "Tracks how well gcbal performed.")
 (defvar gcbal--base-gctime 0.)
 
 ;; TODO: this value should be inferred by sampling the base GC time at different emacs
@@ -75,7 +76,7 @@ When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
           gcbal--consed-vec))
 
 (defun gcbal--emacs-memory-usage ()
-  " TODO: this is most likely the biggest bottle-neck "
+  "Get Emacs process rss memory usage."
   (alist-get 'rss (process-attributes (emacs-pid))))
 
 (defun gcbal--ma-ring (ring)
@@ -135,11 +136,13 @@ because %fs falls below the current minimum time of %fs"
      gcbal--adjusted-target-gctime gcbal-target-gctime
      gcbal--elapsed gc-elapsed
      gc-cons-threshold threshold)
-    (dotimes (i gcbal-ring-size)
+    (dotimes (_ gcbal-ring-size)
       (ring-insert gcbal--thresholds-ring threshold))))
 
+;; TODO: needs macros
 (defun gcbal--adjust-system-constant (&optional reset)
-  " TODO: needs macros "
+  "Set system constants by calculating them or fetching the cached values.
+If RESET is t always calculate them."
   (require 'pcache)
   (let ((repo (pcache-repository 'gcbal)))
     (setq
@@ -162,6 +165,21 @@ because %fs falls below the current minimum time of %fs"
     (pcache-put repo 'gcbal--base-gctime gcbal--base-gctime)))
 
 (defvar gcbal--gcfun (symbol-function #'garbage-collect))
+;; (let ((gc-data (garbage-collect)))
+;;     (mapc (lambda (s) (let ((s (cddr s)))
+;;                      (dotimes (i (length s)) (setf (nth i s) 0)))) gc-data)
+;;     (lambda () (cdr gc-data)))
+(defconst gcbal--stub
+  (lambda () '((conses 16 0 0)
+          (symbols 48 0 0)
+          (strings 32 0 0)
+          (string-bytes 1 0)
+          (vectors 16 0)
+          (vector-slots 8 0 0)
+          (floats 8 0 0)
+          (intervals 56 0 0)
+          (buffers 0 0))))
+
 
 ;;;###autoload
 (define-minor-mode gcbal-mode
@@ -170,17 +188,20 @@ because %fs falls below the current minimum time of %fs"
   :global t
   (if gcbal-mode
       (progn
-        (when (boundp #'gcmh-mode)
+        (when (fboundp #'gcmh-mode)
           (gcmh-mode -1))
 
         (gcbal--reset-threshold)
         (gcbal--reset-consed-table)
 
-        (fset #'garbage-collect (lambda))
+        (fset #'garbage-collect gcbal--stub)
         (add-hook 'post-gc-hook #'gcbal--adjust-threshold)
         ;; (fset #'garbage-collect #'gcbal--garbage-collect)
         )
     (fset #'garbage-collect gcbal--gcfun)
-    (remove-hook 'post-gc-hook #'gcbal--adjust-threshold)))
+    (remove-hook 'post-gc-hook #'gcbal--adjust-threshold)
+    (setq gc-cons-threshold 800000)))
 
 (provide 'gcbal)
+
+;;; gcbal.el ends here
