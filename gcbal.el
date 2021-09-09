@@ -28,6 +28,8 @@ Must be higher than the time spent collecting no garbage.")
   "Increase target time automatically.
 When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
 
+(defvar gcbal-target-gctime-increment 0.1
+  "Ratio to increase `gcbal-target-gctime', when it is not possible to respect it.")
 (defvar gcbal-ring-size 5)
 (defvar gcbal--adjusted-target-gctime gcbal-target-gctime)
 (defvar gcbal-verbose nil)
@@ -108,7 +110,9 @@ When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
 because %fs falls below the current minimum time of %fs"
                gcbal-target-gctime min-gctime)
       (when gcbal-target-auto
-        (cl-incf gcbal--adjusted-target-gctime min-gctime)))
+        (setf gcbal--adjusted-target-gctime
+              (* min-gctime
+                 (+ 1. gcbal-target-gctime-increment)))))
 
     (ring-insert gcbal--thresholds-ring  threshold)
     (setq gc-cons-threshold (gcbal--ma-ring gcbal--thresholds-ring)
