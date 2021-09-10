@@ -108,6 +108,7 @@ When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
                   (< gctime-ratio (- 1 gcbal-error)))
           (setq gc-cons-threshold
                 (truncate (* (/ consed last-gctime) gcbal-target-gctime))))))
+    (setq gcbal--last-gctime last-gctime)
     (when gcbal-verbose
       (message "gcbal -- last: %f, cns: %f"
                last-gctime consed))))
