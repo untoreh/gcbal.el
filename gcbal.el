@@ -21,6 +21,8 @@
 
 (require 'pcache)
 
+(defvar gcbal-strategy 'simple "Either 'simple or 'offset.")
+(defvar gcbal--current-strategy nil "What strategy was set.")
 (defvar gcbal-target-gctime 0.33
   "Desired time for a GC run.
 Must be higher than the time spent collecting no garbage.")
@@ -45,6 +47,11 @@ When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
 ;; These are used for the calculation of `'gcbal--system-constant
 (defconst gcbal--ref-gctime 0.445)
 (defconst gcbal--ref-mem 1620000)
+
+(defvar gcbal--elapsed 0 "Tracks previos `gc-elapsed'.")
+(defvar gcbal--last-gctime 0 "Tracks previous gc runtime.")
+(defvar gcbal-error 0.03 "How much error to tolerate.")
+
 
 (defconst gcbal--consed-vec
   [intervals-consed cons-cells-consed vector-cells-consed
@@ -90,7 +97,22 @@ When `gcbal-target-gctime' is too low and `gcbal-target-auto' is t.")
       (cl-incf c))
     (/ s size)))
 
-(defun gcbal--adjust-threshold ()
+(defun gcbal--adjust-threshold-simple ()
+  (let* ((consed (-sum (gcbal--diff-cons-table)))
+         (last-gctime (- gc-elapsed gcbal--elapsed)))
+    (setq gcbal--elapsed gc-elapsed)
+    (when (> last-gctime 0)
+      (let ((gctime-ratio (/ gcbal--last-gctime last-gctime)))
+        ;; only change when outside margin of error
+        (when (or (>= gctime-ratio (+ 1 gcbal-error))
+                  (< gctime-ratio (- 1 gcbal-error)))
+          (setq gc-cons-threshold
+                (truncate (* (/ consed last-gctime) gcbal-target-gctime))))))
+    (when gcbal-verbose
+      (message "gcbal -- last: %f, cns: %f"
+               last-gctime consed))))
+
+(defun gcbal--adjust-threshold-offset ()
   (let* ((consed (-sum (gcbal--diff-cons-table)))
          (min-gctime (* gcbal--unit-gctime
                         (gcbal--emacs-memory-usage)))
@@ -120,7 +142,7 @@ because %fs falls below the current minimum time of %fs"
 
     (when gcbal-verbose
       (ring-insert gcbal--offsets-ring last-offset)
-      (message "gcbal: min %f, trg: %f, last: %f, cns: %f, rat: %f, accu: %f"
+      (message "gcbal -- min: %f, trg: %f, last: %f, cns: %f, rat: %f, accu: %f"
                min-gctime target-offset last-offset
                consed (/ target-offset last-offset)
                (gcbal--ma-ring gcbal--offsets-ring)
@@ -191,19 +213,28 @@ If RESET is t always calculate them."
   :lighter " GCBAL"
   :global t
   (if gcbal-mode
-      (progn
-        (when (fboundp #'gcmh-mode)
-          (gcmh-mode -1))
+      (let ((adjust-func
+             (pcase gcbal-strategy
+               ('simple #'gcbal--adjust-threshold-simple)
+               ('offset #'gcbal--adjust-threshold-offset))))
+        (progn
+          (when (fboundp #'gcmh-mode)
+            (gcmh-mode -1))
 
-        (gcbal--reset-threshold)
-        (gcbal--reset-consed-table)
+          (gcbal--reset-threshold)
+          (gcbal--reset-consed-table)
 
-        (fset #'garbage-collect gcbal--stub)
-        (add-hook 'post-gc-hook #'gcbal--adjust-threshold)
+          (fset #'garbage-collect gcbal--stub)
+          (setq gcbal--current-strategy gcbal-strategy)
+          (add-hook 'post-gc-hook adjust-func))
         ;; (fset #'garbage-collect #'gcbal--garbage-collect)
         )
     (fset #'garbage-collect gcbal--gcfun)
-    (remove-hook 'post-gc-hook #'gcbal--adjust-threshold)
+    (let ((adjust-func
+           (pcase gcbal--current-strategy
+             ('simple #'gcbal--adjust-threshold-simple)
+             ('offset #'gcbal--adjust-threshold-offset))))
+      (remove-hook 'post-gc-hook adjust-func))
     (setq gc-cons-threshold 800000)))
 
 (provide 'gcbal)
