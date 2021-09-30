@@ -157,6 +157,10 @@ because %fs falls below the current minimum time of %fs"
 
 (defun gcbal--reset-threshold ()
   (let ((threshold 4096))
+    ;; run gc once in case system constants are cached and gc
+    ;; is never actually run on start (which may cause calc offshoots
+    ;; because of too large amounts of garbage)
+    (garbage-collect)
     (gcbal--adjust-system-constant)
     (setq
      gcbal--unit-gctime (* gcbal--system-constant gcbal--base-gctime)
@@ -207,17 +211,19 @@ If RESET is t always calculate them."
           (intervals 56 0 0)
           (buffers 0 0))))
 
+(defun adjust--func ()
+  "Return the adjustment function by strategy."
+  (pcase gcbal-strategy
+    ('simple #'gcbal--adjust-threshold-simple)
+    ('offset #'gcbal--adjust-threshold-offset)))
 
 ;;;###autoload
 (define-minor-mode gcbal-mode
   "Minor mode to tweak Garbage Collection strategy."
   :lighter " GCBAL"
   :global t
-  (if gcbal-mode
-      (let ((adjust-func
-             (pcase gcbal-strategy
-               ('simple #'gcbal--adjust-threshold-simple)
-               ('offset #'gcbal--adjust-threshold-offset))))
+  (let ((adjust-func (adjust--func)))
+    (if gcbal-mode
         (progn
           (when (fboundp #'gcmh-mode)
             (gcmh-mode -1))
@@ -228,15 +234,11 @@ If RESET is t always calculate them."
           (fset #'garbage-collect gcbal--stub)
           (setq gcbal--current-strategy gcbal-strategy)
           (add-hook 'post-gc-hook adjust-func))
-        ;; (fset #'garbage-collect #'gcbal--garbage-collect)
-        )
-    (fset #'garbage-collect gcbal--gcfun)
-    (let ((adjust-func
-           (pcase gcbal--current-strategy
-             ('simple #'gcbal--adjust-threshold-simple)
-             ('offset #'gcbal--adjust-threshold-offset))))
-      (remove-hook 'post-gc-hook adjust-func))
-    (setq gc-cons-threshold 800000)))
+      ;; (fset #'garbage-collect #'gcbal--garbage-collect)
+      (fset #'garbage-collect gcbal--gcfun)
+      (remove-hook 'post-gc-hook adjust-func)
+      (setq gc-cons-threshold 800000)
+      )))
 
 (provide 'gcbal)
 
